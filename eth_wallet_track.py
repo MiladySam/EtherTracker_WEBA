@@ -1,78 +1,89 @@
-from requests import get
+import requests
 from matplotlib import pyplot as plt
 from datetime import datetime
 
-
 API_KEY = "CUUXI6S5B5HETZPC29XJ4SEUCYD4ZH7E6I"
-
-address = "0xDDD0Bc1144f64d717C66AC8B4247045bB5a8A1d1"
-
-ETHER_VALUE = 10**18
-
-
 BASE_URL = "https://api.etherscan.io/api"
+ETHER_VALUE = 10 ** 18
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
 
-def api_en_url(module, action, address, **kwargs):
+def make_api_url(module, action, address, **kwargs):
     url = BASE_URL + f"?module={module}&action={action}&address={address}&apikey={API_KEY}"
-
 
     for key, value in kwargs.items():
         url += f"&{key}={value}"
+
     return url
 
-def get_compte_balance(address):
-    balance_url = api_en_url("account", "balance", address, tag="latest")
-    response = get(balance_url)
+def get_account_balance(address):
+    balance_url = make_api_url("account", "balance", address, tag="latest")
+    response = requests.get(balance_url)
     data = response.json()
 
-    value = (int(data["result"])/ETHER_VALUE)
+    value = int(data["result"]) / ETHER_VALUE
     return value
 
-
-
-def get_transaction(address):
-
-#transaction normal entre un pf a un autre pf 
-
-    transaction_url = api_en_url("account", "txlist", address, startblock=0, endblock=99999999, page=1, offset=10000, sort="desc")
-    response = get(transaction_url)
+def get_transactions(address):
+    transactions_url = make_api_url("account", "txlist", address, startblock=0, endblock=99999999, page=1, offset=10000, sort="asc")
+    response = requests.get(transactions_url)
     data = response.json()["result"]
 
-#transaction interne entre un pf et un contrat
-    internal_transaction_url = api_en_url("account", "txlistinternal", address, startblock=0, endblock=99999999, page=1, offset=10000, sort="desc")
-    response2 = get(internal_transaction_url)
-    data2 = response2.json()["result"]
-
-
-    data.extend(data2)
-    data.sort(key=lambda x: int(x["timeStamp"]))
- 
-
-    balance_actuel = 0
+    current_balance = 0
     balances = []
     times = []
 
+    for tx in data:
+        to = tx["to"]
+        from_addr = tx["from"]
+        value = int(tx["value"]) / ETHER_VALUE
 
-
-    for transaction in data:
-        to = transaction["to"]
-        from_addr = transaction["from"]
-        value = (int(transaction["value"])/ETHER_VALUE)
-        if "gasPrice" in transaction:
-            gas = int(transaction["gasUsed"]) * int(transaction["gasPrice"])/ETHER_VALUE
+        if "gasPrice" in tx:
+            gas = int(tx["gasUsed"]) * int(tx["gasPrice"]) / ETHER_VALUE
         else:
-            gas = int(transaction["gasUsed"]) / ETHER_VALUE
-        time = datetime.fromtimestamp(int(transaction["timeStamp"]))
+            gas = int(tx["gasUsed"]) / ETHER_VALUE
 
-        argent_entrant = to.lower() == address.lower()
+        time = datetime.fromtimestamp(int(tx['timeStamp']))
+        money_in = to.lower() == address.lower()
 
-        if argent_entrant:
-            balance_actuel += value
+        if money_in:
+            current_balance += value
         else:
-            balance_actuel -= value + gas
-        balances.append(balance_actuel)
+            # Vérifie si le solde devient négatif après la transaction
+            if current_balance < (value + gas):
+                print(f"Transaction suspecte: solde négatif après la transaction à {time}")
+                # Vous pouvez choisir de ne pas ajouter cette transaction aux données
+            else:
+                current_balance -= value + gas
+
+        balances.append(current_balance)
         times.append(time)
-    print(balance_actuel)
 
+    plt.plot(times, balances, label="Solde (ETH)")
+    
+    plt.axhline(y=current_balance, color='r', linestyle='--', label='Solde actuel (ETH)')
 
-get_transaction(address)
+    # Convertir le solde en dollars
+    eth_usd_url = f"{COINGECKO_URL}?ids=ethereum&vs_currencies=usd"
+    response2 = requests.get(eth_usd_url)
+    data2 = response2.json()
+    eth_usd = data2["ethereum"]["usd"]
+
+    usd_balance = current_balance * float(eth_usd)
+
+    plt.xlabel('Time')
+    plt.ylabel('Solde (ETH)')
+    plt.title('Solde du compte Ethereum au fil du temps')
+    plt.text(times[0], max(balances), f"1 ETH = ${eth_usd:.2f}", fontsize=10, color='green', verticalalignment='top', horizontalalignment='left')
+    plt.annotate(f'Solde actuel: {current_balance:.2f} ETH (${usd_balance:.2f})', xy=(times[-1], current_balance), xytext=(-50, 30), textcoords='offset points', fontsize=10, color='black', bbox=dict(facecolor='lightgray', alpha=0.5, edgecolor='none'), arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.5', color='black'))
+
+    plt.legend()
+
+    # Affichage du prix actuel de l'Ethereum à gauche du graphique
+    
+
+    # Annotation pour afficher le solde actuel et le prix de l'ETH
+
+    plt.show()
+
+address = "0x47df6e44809badeca436008d1793399ede60052e"
+get_transactions(address)
